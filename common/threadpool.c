@@ -49,6 +49,7 @@ struct x264_threadpool_t
 
 static void *threadpool_thread( x264_threadpool_t *pool )
 {
+    x264_pthread_setname("x264 TP worker");
     if( pool->init_func )
         pool->init_func( pool->init_arg );
 

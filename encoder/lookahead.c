@@ -89,6 +89,7 @@ static void lookahead_slicetype_decide( x264_t *h )
 
 static void *lookahead_thread( x264_t *h )
 {
+    x264_pthread_setname("x264 LA worker");
     while( !h->lookahead->b_exit_thread )
     {
         x264_pthread_mutex_lock( &h->lookahead->ifbuf.mutex );

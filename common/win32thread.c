@@ -53,6 +53,7 @@ static x264_pthread_mutex_t static_mutex;
 /* _beginthreadex requires that the start routine is __stdcall */
 static unsigned __stdcall win32thread_worker( void *arg )
 {
+    x264_pthread_setname("x264 worker");
     x264_pthread_t *h = arg;
     *h->p_ret = h->func( h->arg );
     return 0;

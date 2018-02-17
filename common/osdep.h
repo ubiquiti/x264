@@ -271,6 +271,16 @@ static ALWAYS_INLINE int x264_pthread_fetch_and_add( int *val, int add, x264_pth
 #endif
 }
 
+static ALWAYS_INLINE void x264_pthread_setname( const char *pName ) {
+    if (pName == NULL)
+		return;
+#if defined(__APPLE__) && defined(__MACH__)
+    pthread_setname_np(pName);
+#elif defined __linux__
+    prctl(PR_SET_NAME, pName);
+#endif
+}
+
 #define WORD_SIZE sizeof(void*)
 
 #define asm __asm__
