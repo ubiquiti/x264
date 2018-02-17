@@ -64,6 +64,10 @@ int x264_vsnprintf( char *s, size_t n, const char *fmt, va_list arg );
 #include <strings.h>
 #endif
 
+#ifdef __linux__
+#include <sys/prctl.h>
+#endif
+
 #if !defined(va_copy) && defined(__INTEL_COMPILER)
 #define va_copy(dst, src) ((dst) = (src))
 #endif
