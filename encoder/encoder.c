@@ -1419,6 +1419,10 @@ static void set_aspect_ratio( x264_t *h, x264_param_t *param, int initial )
  ****************************************************************************/
 x264_t *x264_encoder_open( x264_param_t *param )
 {
+//#define PRINT_DELAY_COMPUTATIONS
+#ifdef PRINT_DELAY_COMPUTATIONS
+    int oldDelay = 0;
+#endif /* PRINT_DELAY_COMPUTATIONS */
     x264_t *h;
     char buf[1000], *p;
     int i_slicetype_length;
@@ -1496,16 +1500,58 @@ x264_t *x264_encoder_open( x264_param_t *param )
     h->mb.b_adaptive_mbaff = PARAM_INTERLACED && h->param.analyse.i_subpel_refine;
 
     /* Init frames. */
-    if( h->param.i_bframe_adaptive == X264_B_ADAPT_TRELLIS && !h->param.rc.b_stat_read )
+    if( h->param.i_bframe_adaptive == X264_B_ADAPT_TRELLIS && !h->param.rc.b_stat_read ) {
+#ifdef PRINT_DELAY_COMPUTATIONS
+        oldDelay=h->frames.i_delay;
+#endif /* PRINT_DELAY_COMPUTATIONS */
         h->frames.i_delay = X264_MAX(h->param.i_bframe,3)*4;
-    else
+#ifdef PRINT_DELAY_COMPUTATIONS
+        fprintf(stderr,"%s:%d - i_delay: %d -> %d\n",__FILE__,__LINE__,oldDelay,h->frames.i_delay);
+#endif /* PRINT_DELAY_COMPUTATIONS */
+    } else {
+#ifdef PRINT_DELAY_COMPUTATIONS
+        oldDelay=h->frames.i_delay;
+#endif /* PRINT_DELAY_COMPUTATIONS */
         h->frames.i_delay = h->param.i_bframe;
-    if( h->param.rc.b_mb_tree || h->param.rc.i_vbv_buffer_size )
+#ifdef PRINT_DELAY_COMPUTATIONS
+        fprintf(stderr,"%s:%d - i_bframe: %d; i_delay: %d -> %d\n",__FILE__,__LINE__,h->param.i_bframe,oldDelay,h->frames.i_delay);
+#endif /* PRINT_DELAY_COMPUTATIONS */
+    }
+    if( h->param.rc.b_mb_tree || h->param.rc.i_vbv_buffer_size ) {
+#ifdef PRINT_DELAY_COMPUTATIONS
+        oldDelay=h->frames.i_delay;
+#endif /* PRINT_DELAY_COMPUTATIONS */
         h->frames.i_delay = X264_MAX( h->frames.i_delay, h->param.rc.i_lookahead );
+#ifdef PRINT_DELAY_COMPUTATIONS
+        fprintf(stderr,"%s:%d - i_delay: %d -> %d\n",__FILE__,__LINE__,oldDelay,h->frames.i_delay); //encoder/encoder.c:1512 - i_delay: 0 -> 60
+#endif /* PRINT_DELAY_COMPUTATIONS */
+    }
     i_slicetype_length = h->frames.i_delay;
+
+#ifdef PRINT_DELAY_COMPUTATIONS
+    oldDelay=h->frames.i_delay;
+#endif /* PRINT_DELAY_COMPUTATIONS */
     h->frames.i_delay += h->i_thread_frames - 1;
+#ifdef PRINT_DELAY_COMPUTATIONS
+    fprintf(stderr,"%s:%d - i_delay: %d -> %d\n",__FILE__,__LINE__,oldDelay,h->frames.i_delay); //encoder/encoder.c:1518 - i_delay: 60 -> 70
+#endif /* PRINT_DELAY_COMPUTATIONS */
+
+#ifdef PRINT_DELAY_COMPUTATIONS
+    oldDelay=h->frames.i_delay;
+#endif /* PRINT_DELAY_COMPUTATIONS */
     h->frames.i_delay += h->param.i_sync_lookahead;
+#ifdef PRINT_DELAY_COMPUTATIONS
+    fprintf(stderr,"%s:%d - i_delay: %d -> %d\n",__FILE__,__LINE__,oldDelay,h->frames.i_delay); //encoder/encoder.c:1522 - i_delay: 70 -> 71
+#endif /* PRINT_DELAY_COMPUTATIONS */
+
+#ifdef PRINT_DELAY_COMPUTATIONS
+    oldDelay=h->frames.i_delay;
+#endif /* PRINT_DELAY_COMPUTATIONS */
     h->frames.i_delay += h->param.b_vfr_input;
+#ifdef PRINT_DELAY_COMPUTATIONS
+    fprintf(stderr,"%s:%d - i_delay: %d -> %d\n",__FILE__,__LINE__,oldDelay,h->frames.i_delay); //encoder/encoder.c:1526 - i_delay: 71 -> 72
+#endif /* PRINT_DELAY_COMPUTATIONS */
+
     h->frames.i_bframe_delay = h->param.i_bframe ? (h->param.i_bframe_pyramid ? 2 : 1) : 0;
 
     h->frames.i_max_ref0 = h->param.i_frame_reference;
