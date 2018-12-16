@@ -766,8 +766,12 @@ void x264_frame_push_unused( x264_t *h, x264_frame_t *frame )
 {
     assert( frame->i_reference_count > 0 );
     frame->i_reference_count--;
-    if( frame->i_reference_count == 0 )
-        x264_frame_push( h->frames.unused[frame->b_fdec], frame );
+    if( frame->i_reference_count == 0 ) {
+		if(h->param.b_disable_frames_cache)
+			x264_frame_delete(frame);
+		else
+        	x264_frame_push( h->frames.unused[frame->b_fdec], frame );
+	}
 }
 
 x264_frame_t *x264_frame_pop_unused( x264_t *h, int b_fdec )
@@ -797,8 +801,12 @@ void x264_frame_push_blank_unused( x264_t *h, x264_frame_t *frame )
 {
     assert( frame->i_reference_count > 0 );
     frame->i_reference_count--;
-    if( frame->i_reference_count == 0 )
-        x264_frame_push( h->frames.blank_unused, frame );
+    if( frame->i_reference_count == 0 ) {
+		if(h->param.b_disable_frames_cache)
+			x264_frame_delete(frame);
+		else
+        	x264_frame_push( h->frames.blank_unused, frame );
+	}
 }
 
 x264_frame_t *x264_frame_pop_blank_unused( x264_t *h )

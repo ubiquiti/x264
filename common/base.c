@@ -99,7 +99,8 @@ void x264_log_internal( int i_level, const char *psz_fmt, ... )
 /****************************************************************************
  * x264_malloc:
  ****************************************************************************/
-void *x264_malloc( int i_size )
+#if 1
+void *x264_malloc__(const char *pFile, int lineNumber, int i_size)
 {
     uint8_t *align_buf = NULL;
 #if HAVE_MALLOC_H
@@ -150,6 +151,63 @@ void x264_free( void *p )
 #endif
     }
 }
+#else
+#define POINTER_SIZE NATIVE_ALIGN
+#define ALIGN_TO_POINTER_SIZE(newSize) ((((newSize)+POINTER_SIZE-1)/POINTER_SIZE)*POINTER_SIZE)
+
+struct __attribute__((__packed__)) memory_zone_t {
+	size_t requestedSize;
+	size_t allocatedSize;
+	uint8_t *pData;
+};
+
+union __attribute__((__packed__)) padded_memory_zone_t{
+	struct memory_zone_t mz;
+	unsigned char padding[ALIGN_TO_POINTER_SIZE(sizeof(struct memory_zone_t))];
+};
+
+static volatile size_t gTotalAllocated=0;
+
+static __thread char zonePrint[512];
+const char * printZone(const union padded_memory_zone_t *pZone) {
+	sprintf(zonePrint,"pZone: %p; R: %8zu; A: %8zu; pData: %p",pZone,pZone->mz.requestedSize,pZone->mz.allocatedSize,pZone->mz.pData);
+	return zonePrint;
+}
+
+void *x264_malloc( int i_size )
+{
+	size_t allocatedSize=i_size+sizeof(union padded_memory_zone_t);
+	uint8_t *pRaw=malloc(allocatedSize);
+	if(pRaw==NULL){
+		x264_log_internal( X264_LOG_ERROR, "malloc of size %d failed\n", i_size );
+		return NULL;
+	}
+	union padded_memory_zone_t *pZone=(union padded_memory_zone_t *)pRaw;
+	pZone->mz.allocatedSize=allocatedSize;
+	pZone->mz.requestedSize=i_size;
+	pZone->mz.pData=pRaw+sizeof(union padded_memory_zone_t);
+	size_t totalAllocated=__atomic_add_fetch(&gTotalAllocated,allocatedSize,__ATOMIC_SEQ_CST);
+	//fprintf(stderr,"+return: %p; zone: %s; totalAllocated: %zu\n",pZone->mz.pData,printZone(pZone),totalAllocated);
+	fprintf(stderr,"+totalAllocated: %zu\n",totalAllocated);
+	return pZone->mz.pData;
+}
+
+/****************************************************************************
+ * x264_free:
+ ****************************************************************************/
+void x264_free( void *p )
+{
+    if( !p )
+		return;
+	uint8_t *pRaw=(uint8_t *)p;
+	uint8_t *pData=pRaw-sizeof(union padded_memory_zone_t);
+	union padded_memory_zone_t *pZone=(union padded_memory_zone_t *)pData;
+	size_t totalAllocated=__atomic_sub_fetch(&gTotalAllocated,pZone->mz.allocatedSize,__ATOMIC_SEQ_CST);
+	//fprintf(stderr,"- param: %p; zone: %s; totalAllocated: %zu\n",p,printZone(pZone),totalAllocated);
+	//fprintf(stderr,"-totalAllocated: %zu\n",totalAllocated);
+	free(pData);
+}
+#endif
 
 /****************************************************************************
  * x264_slurp_file:
@@ -431,6 +489,8 @@ static void param_default( x264_param_t *param )
     param->psz_clbin_file = NULL;
     param->i_avcintra_class = 0;
     param->i_avcintra_flavor = X264_AVCINTRA_FLAVOR_PANASONIC;
+
+	param->b_disable_frames_cache = 0;
 }
 
 void x264_param_default( x264_param_t *param )
@@ -890,6 +950,8 @@ static int param_parse( x264_param_t *p, const char *name, const char *value )
 #define OPT(STR) else if( !strcmp( name, STR ) )
 #define OPT2(STR0, STR1) else if( !strcmp( name, STR0 ) || !strcmp( name, STR1 ) )
     if( 0 );
+	OPT("disableInternalCache")
+		p->b_disable_frames_cache = atobool(value);
     OPT("asm")
     {
         p->cpu = isdigit(value[0]) ? atoi(value) :

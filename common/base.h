@@ -264,7 +264,8 @@ void x264_log_internal( int i_level, const char *psz_fmt, ... );
 
 /* x264_malloc : will do or emulate a memalign
  * you have to use x264_free for buffers allocated with x264_malloc */
-void *x264_malloc( int );
+#define x264_malloc(size) x264_malloc__(__FILE__,__LINE__,size)
+void *x264_malloc__(const char *pFile, int lineNumber, int i_size);
 void  x264_free( void * );
 
 /* x264_slurp_file: malloc space for the whole file and read it */

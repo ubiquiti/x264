@@ -1,0 +1,15 @@
+#!/bin/sh
+
+set -e
+
+if [ ! -f ./.configured ]
+then
+	./configure \
+		--prefix=/Users/shiretu/work/evostream/builders/cmake/external_libs/ffmpeg \
+		--disable-cli \
+		--enable-static \
+		--extra-cflags="-mmacosx-version-min=10.11 -funwind-tables -g"
+	>./.configured
+fi
+
+make -j32 install

@@ -1,4 +1,5 @@
 *~
+.configured
 *.a
 *.diff
 *.orig

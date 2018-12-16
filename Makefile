@@ -16,7 +16,7 @@ default:
 SRCS = common/osdep.c common/base.c common/cpu.c common/tables.c \
        encoder/api.c
 
-SRCS_X = common/mc.c common/predict.c common/pixel.c common/macroblock.c \
+SRCS_X = common/counters.c common/mc.c common/predict.c common/pixel.c common/macroblock.c \
          common/frame.c common/dct.c common/cabac.c \
          common/common.c common/rectangle.c \
          common/set.c common/quant.c common/deblock.c common/vlc.c \
