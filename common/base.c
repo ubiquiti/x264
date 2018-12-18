@@ -35,7 +35,7 @@
 #include <sys/mman.h>
 #endif
 
-//#define UBNT_ALLOCATOR
+#define UBNT_ALLOCATOR
 #ifdef UBNT_ALLOCATOR
 #include <unistd.h>
 #include <sys/mman.h>
@@ -103,38 +103,32 @@ void x264_log_internal( int i_level, const char *psz_fmt, ... )
 }
 
 #ifdef UBNT_ALLOCATOR
-#define PRINT_ALLOCATION_STATS
+//#define PRINT_ALLOCATION_STATS
 #define ALIGN_SIZE(s,a) (((s)+(a)-1)/(a)*(a))
 
 struct memory_zone_t {
 	size_t requestedSize;
 	size_t allocatedSize;
 };
+static const size_t gHeaderSize = ALIGN_SIZE(sizeof(struct memory_zone_t), NATIVE_ALIGN);
 
-static __thread char zonePrint[512];
-static __thread size_t gPageSize = 0;
-static __thread size_t gMemoryZoneSize = 0;
 #ifdef PRINT_ALLOCATION_STATS
 static volatile size_t gTotalAllocated = 0;
 static volatile size_t gTotalRequested = 0;
-#endif /* PRINT_ALLOCATION_STATS */
-
+static __thread char zonePrint[512];
 const char * printZone(const struct memory_zone_t *pZone) {
 	sprintf(zonePrint, "pZone: %p; R: %8zu; A: %8zu", pZone, pZone->requestedSize, pZone->allocatedSize);
 	return zonePrint;
 }
+#endif /* PRINT_ALLOCATION_STATS */
 
 /****************************************************************************
  * x264_free:
  ****************************************************************************/
 void *x264_malloc__(const char *pFile, int lineNumber, int requestedSize) {
-	if (gPageSize == 0) {
-		gPageSize = sysconf(_SC_PAGESIZE);
-		gMemoryZoneSize = ALIGN_SIZE(sizeof (struct memory_zone_t), gPageSize);
-	}
 	if (requestedSize <= 0)
 		return NULL;
-	size_t allocatedSize = ALIGN_SIZE(requestedSize, gPageSize) + gMemoryZoneSize;
+	size_t allocatedSize=requestedSize+gHeaderSize;
 	uint8_t *pRaw = mmap(NULL, allocatedSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if (pRaw == MAP_FAILED)
 		return NULL;
@@ -149,8 +143,7 @@ void *x264_malloc__(const char *pFile, int lineNumber, int requestedSize) {
 			allocatedSize, (size_t) requestedSize, (double) allocatedSize / (double) requestedSize - 1.0
 			);
 #endif /* PRINT_ALLOCATION_STATS */
-
-	return pRaw + gMemoryZoneSize;
+	return pRaw + gHeaderSize;
 }
 
 /****************************************************************************
@@ -160,7 +153,7 @@ void x264_free(void *p) {
 	if (p == NULL)
 		return;
 	uint8_t *pRaw = (uint8_t *) p;
-	struct memory_zone_t *pZone = (struct memory_zone_t *) (pRaw - gMemoryZoneSize);
+	struct memory_zone_t *pZone = (struct memory_zone_t *) (pRaw - gHeaderSize);
 #ifdef PRINT_ALLOCATION_STATS
 	size_t totalAllocated = __atomic_sub_fetch(&gTotalAllocated, pZone->allocatedSize, __ATOMIC_SEQ_CST);
 	size_t totalRequested = __atomic_sub_fetch(&gTotalRequested, pZone->requestedSize, __ATOMIC_SEQ_CST);
