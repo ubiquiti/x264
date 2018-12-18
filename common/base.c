@@ -35,6 +35,12 @@
 #include <sys/mman.h>
 #endif
 
+//#define UBNT_ALLOCATOR
+#ifdef UBNT_ALLOCATOR
+#include <unistd.h>
+#include <sys/mman.h>
+#endif /* UBNT_ALLOCATOR */
+
 /****************************************************************************
  * x264_reduce_fraction:
  ****************************************************************************/
@@ -96,10 +102,81 @@ void x264_log_internal( int i_level, const char *psz_fmt, ... )
     va_end( arg );
 }
 
+#ifdef UBNT_ALLOCATOR
+#define PRINT_ALLOCATION_STATS
+#define ALIGN_SIZE(s,a) (((s)+(a)-1)/(a)*(a))
+
+struct memory_zone_t {
+	size_t requestedSize;
+	size_t allocatedSize;
+};
+
+static __thread char zonePrint[512];
+static __thread size_t gPageSize = 0;
+static __thread size_t gMemoryZoneSize = 0;
+#ifdef PRINT_ALLOCATION_STATS
+static volatile size_t gTotalAllocated = 0;
+static volatile size_t gTotalRequested = 0;
+#endif /* PRINT_ALLOCATION_STATS */
+
+const char * printZone(const struct memory_zone_t *pZone) {
+	sprintf(zonePrint, "pZone: %p; R: %8zu; A: %8zu", pZone, pZone->requestedSize, pZone->allocatedSize);
+	return zonePrint;
+}
+
+/****************************************************************************
+ * x264_free:
+ ****************************************************************************/
+void *x264_malloc__(const char *pFile, int lineNumber, int requestedSize) {
+	if (gPageSize == 0) {
+		gPageSize = sysconf(_SC_PAGESIZE);
+		gMemoryZoneSize = ALIGN_SIZE(sizeof (struct memory_zone_t), gPageSize);
+	}
+	if (requestedSize <= 0)
+		return NULL;
+	size_t allocatedSize = ALIGN_SIZE(requestedSize, gPageSize) + gMemoryZoneSize;
+	uint8_t *pRaw = mmap(NULL, allocatedSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (pRaw == MAP_FAILED)
+		return NULL;
+	struct memory_zone_t *pZone = (struct memory_zone_t *) pRaw;
+	pZone->allocatedSize = allocatedSize;
+	pZone->requestedSize = requestedSize;
+#ifdef PRINT_ALLOCATION_STATS
+	size_t totalAllocated = __atomic_add_fetch(&gTotalAllocated, allocatedSize, __ATOMIC_SEQ_CST);
+	size_t totalRequested = __atomic_add_fetch(&gTotalRequested, requestedSize, __ATOMIC_SEQ_CST);
+	fprintf(stderr, "+ TA: %8zu; TR: %8zu; TO: %.2f; A: %8zu; R: %8zu; O: %6.2f\n",
+			totalAllocated, totalRequested, (double) totalAllocated / (double) totalRequested - 1.0,
+			allocatedSize, (size_t) requestedSize, (double) allocatedSize / (double) requestedSize - 1.0
+			);
+#endif /* PRINT_ALLOCATION_STATS */
+
+	return pRaw + gMemoryZoneSize;
+}
+
+/****************************************************************************
+ * x264_free:
+ ****************************************************************************/
+void x264_free(void *p) {
+	if (p == NULL)
+		return;
+	uint8_t *pRaw = (uint8_t *) p;
+	struct memory_zone_t *pZone = (struct memory_zone_t *) (pRaw - gMemoryZoneSize);
+#ifdef PRINT_ALLOCATION_STATS
+	size_t totalAllocated = __atomic_sub_fetch(&gTotalAllocated, pZone->allocatedSize, __ATOMIC_SEQ_CST);
+	size_t totalRequested = __atomic_sub_fetch(&gTotalRequested, pZone->requestedSize, __ATOMIC_SEQ_CST);
+	fprintf(stderr, "- TA: %8zu; TR: %8zu; TO: %.2f; A: %8zu; R: %8zu; O: %6.2f\n",
+			totalAllocated, totalRequested, (double) totalAllocated / (double) totalRequested - 1.0,
+			pZone->allocatedSize, pZone->requestedSize, (double) pZone->allocatedSize / (double) pZone->requestedSize - 1.0);
+#endif /* PRINT_ALLOCATION_STATS */
+	if (munmap(pZone, pZone->allocatedSize) != 0) {
+		assert(0);
+		exit(1);
+	}
+}
+#else /* UBNT_ALLOCATOR */
 /****************************************************************************
  * x264_malloc:
  ****************************************************************************/
-#if 1
 void *x264_malloc__(const char *pFile, int lineNumber, int i_size)
 {
     uint8_t *align_buf = NULL;
@@ -151,63 +228,7 @@ void x264_free( void *p )
 #endif
     }
 }
-#else
-#define POINTER_SIZE NATIVE_ALIGN
-#define ALIGN_TO_POINTER_SIZE(newSize) ((((newSize)+POINTER_SIZE-1)/POINTER_SIZE)*POINTER_SIZE)
-
-struct __attribute__((__packed__)) memory_zone_t {
-	size_t requestedSize;
-	size_t allocatedSize;
-	uint8_t *pData;
-};
-
-union __attribute__((__packed__)) padded_memory_zone_t{
-	struct memory_zone_t mz;
-	unsigned char padding[ALIGN_TO_POINTER_SIZE(sizeof(struct memory_zone_t))];
-};
-
-static volatile size_t gTotalAllocated=0;
-
-static __thread char zonePrint[512];
-const char * printZone(const union padded_memory_zone_t *pZone) {
-	sprintf(zonePrint,"pZone: %p; R: %8zu; A: %8zu; pData: %p",pZone,pZone->mz.requestedSize,pZone->mz.allocatedSize,pZone->mz.pData);
-	return zonePrint;
-}
-
-void *x264_malloc( int i_size )
-{
-	size_t allocatedSize=i_size+sizeof(union padded_memory_zone_t);
-	uint8_t *pRaw=malloc(allocatedSize);
-	if(pRaw==NULL){
-		x264_log_internal( X264_LOG_ERROR, "malloc of size %d failed\n", i_size );
-		return NULL;
-	}
-	union padded_memory_zone_t *pZone=(union padded_memory_zone_t *)pRaw;
-	pZone->mz.allocatedSize=allocatedSize;
-	pZone->mz.requestedSize=i_size;
-	pZone->mz.pData=pRaw+sizeof(union padded_memory_zone_t);
-	size_t totalAllocated=__atomic_add_fetch(&gTotalAllocated,allocatedSize,__ATOMIC_SEQ_CST);
-	//fprintf(stderr,"+return: %p; zone: %s; totalAllocated: %zu\n",pZone->mz.pData,printZone(pZone),totalAllocated);
-	fprintf(stderr,"+totalAllocated: %zu\n",totalAllocated);
-	return pZone->mz.pData;
-}
-
-/****************************************************************************
- * x264_free:
- ****************************************************************************/
-void x264_free( void *p )
-{
-    if( !p )
-		return;
-	uint8_t *pRaw=(uint8_t *)p;
-	uint8_t *pData=pRaw-sizeof(union padded_memory_zone_t);
-	union padded_memory_zone_t *pZone=(union padded_memory_zone_t *)pData;
-	size_t totalAllocated=__atomic_sub_fetch(&gTotalAllocated,pZone->mz.allocatedSize,__ATOMIC_SEQ_CST);
-	//fprintf(stderr,"- param: %p; zone: %s; totalAllocated: %zu\n",p,printZone(pZone),totalAllocated);
-	//fprintf(stderr,"-totalAllocated: %zu\n",totalAllocated);
-	free(pData);
-}
-#endif
+#endif /* UBNT_ALLOCATOR */
 
 /****************************************************************************
  * x264_slurp_file:
