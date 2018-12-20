@@ -35,7 +35,7 @@
 #include <sys/mman.h>
 #endif
 
-#define UBNT_ALLOCATOR
+//#define UBNT_ALLOCATOR
 #ifdef UBNT_ALLOCATOR
 #include <unistd.h>
 #include <sys/mman.h>
