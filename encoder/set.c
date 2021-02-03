@@ -1,7 +1,7 @@
 /*****************************************************************************
  * set: header writing
  *****************************************************************************
- * Copyright (C) 2003-2018 x264 project
+ * Copyright (C) 2003-2021 x264 project
  *
  * Authors: Laurent Aimar <fenrir@via.ecp.fr>
  *          Loren Merritt <lorenm@u.washington.edu>
@@ -105,6 +105,9 @@ void x264_sps_init( x264_sps_t *sps, int i_id, x264_param_t *param )
     sps->i_id = i_id;
     sps->i_mb_width = ( param->i_width + 15 ) / 16;
     sps->i_mb_height= ( param->i_height + 15 ) / 16;
+    sps->b_frame_mbs_only = !(param->b_interlaced || param->b_fake_interlaced);
+    if( !sps->b_frame_mbs_only )
+        sps->i_mb_height = ( sps->i_mb_height + 1 ) & ~1;
     sps->i_chroma_format_idc = csp >= X264_CSP_I444 ? CHROMA_444 :
                                csp >= X264_CSP_I422 ? CHROMA_422 :
                                csp >= X264_CSP_I420 ? CHROMA_420 : CHROMA_400;
@@ -179,9 +182,6 @@ void x264_sps_init( x264_sps_t *sps, int i_id, x264_param_t *param )
     sps->b_vui = 1;
 
     sps->b_gaps_in_frame_num_value_allowed = 0;
-    sps->b_frame_mbs_only = !(param->b_interlaced || param->b_fake_interlaced);
-    if( !sps->b_frame_mbs_only )
-        sps->i_mb_height = ( sps->i_mb_height + 1 ) & ~1;
     sps->b_mb_adaptive_frame_field = param->b_interlaced;
     sps->b_direct8x8_inference = 1;
 
@@ -250,7 +250,7 @@ void x264_sps_init_reconfigurable( x264_sps_t *sps, x264_param_t *param )
     sps->crop.i_left   = param->crop_rect.i_left;
     sps->crop.i_top    = param->crop_rect.i_top;
     sps->crop.i_right  = param->crop_rect.i_right + sps->i_mb_width*16 - param->i_width;
-    sps->crop.i_bottom = (param->crop_rect.i_bottom + sps->i_mb_height*16 - param->i_height) >> !sps->b_frame_mbs_only;
+    sps->crop.i_bottom = param->crop_rect.i_bottom + sps->i_mb_height*16 - param->i_height;
     sps->b_crop = sps->crop.i_left  || sps->crop.i_top ||
                   sps->crop.i_right || sps->crop.i_bottom;
 
@@ -363,7 +363,7 @@ void x264_sps_write( bs_t *s, x264_sps_t *sps )
     if( sps->b_crop )
     {
         int h_shift = sps->i_chroma_format_idc == CHROMA_420 || sps->i_chroma_format_idc == CHROMA_422;
-        int v_shift = sps->i_chroma_format_idc == CHROMA_420;
+        int v_shift = (sps->i_chroma_format_idc == CHROMA_420) + !sps->b_frame_mbs_only;
         bs_write_ue( s, sps->crop.i_left   >> h_shift );
         bs_write_ue( s, sps->crop.i_right  >> h_shift );
         bs_write_ue( s, sps->crop.i_top    >> v_shift );
@@ -594,7 +594,7 @@ int x264_sei_version_write( x264_t *h, bs_t *s )
 
     memcpy( payload, uuid, 16 );
     sprintf( payload+16, "x264 - core %d%s - H.264/MPEG-4 AVC codec - "
-             "Copy%s 2003-2018 - http://www.videolan.org/x264.html - options: %s",
+             "Copy%s 2003-2021 - http://www.videolan.org/x264.html - options: %s",
              X264_BUILD, X264_VERSION, HAVE_GPL?"left":"right", opts );
     length = strlen(payload)+1;
 
@@ -794,7 +794,7 @@ int x264_sei_avcintra_vanc_write( x264_t *h, bs_t *s, int len )
 {
     uint8_t data[6000];
     const char *msg = "VANC";
-    if( len > sizeof(data) )
+    if( len < 0 || (unsigned)len > sizeof(data) )
     {
         x264_log( h, X264_LOG_ERROR, "AVC-Intra SEI is too large (%d)\n", len );
         return -1;

@@ -1,7 +1,7 @@
 /*****************************************************************************
  * x264: top-level x264cli functions
  *****************************************************************************
- * Copyright (C) 2003-2018 x264 project
+ * Copyright (C) 2003-2021 x264 project
  *
  * Authors: Loren Merritt <lorenm@u.washington.edu>
  *          Laurent Aimar <fenrir@via.ecp.fr>
@@ -65,6 +65,14 @@
 #include <ffms.h>
 #endif
 
+#if HAVE_GPAC
+#include <gpac/version.h>
+#endif
+
+#if HAVE_LSMASH
+#include <lsmash.h>
+#endif
+
 #ifdef _WIN32
 #define CONSOLE_TITLE_SIZE 200
 static wchar_t org_console_title[CONSOLE_TITLE_SIZE] = L"";
@@ -72,42 +80,8 @@ static wchar_t org_console_title[CONSOLE_TITLE_SIZE] = L"";
 void x264_cli_set_console_title( const char *title )
 {
     wchar_t title_utf16[CONSOLE_TITLE_SIZE];
-    if( utf8_to_utf16( title, title_utf16 ) )
+    if( MultiByteToWideChar( CP_UTF8, MB_ERR_INVALID_CHARS, title, -1, title_utf16, CONSOLE_TITLE_SIZE ) )
         SetConsoleTitleW( title_utf16 );
-}
-
-static int utf16_to_ansi( const wchar_t *utf16, char *ansi, int size )
-{
-    int invalid;
-    return WideCharToMultiByte( CP_ACP, WC_NO_BEST_FIT_CHARS, utf16, -1, ansi, size, NULL, &invalid ) && !invalid;
-}
-
-/* Some external libraries doesn't support Unicode in filenames,
- * as a workaround we can try to get an ANSI filename instead. */
-int x264_ansi_filename( const char *filename, char *ansi_filename, int size, int create_file )
-{
-    wchar_t filename_utf16[MAX_PATH];
-    if( utf8_to_utf16( filename, filename_utf16 ) )
-    {
-        if( create_file )
-        {
-            /* Create the file using the Unicode filename if it doesn't already exist. */
-            FILE *fh = _wfopen( filename_utf16, L"ab" );
-            if( fh )
-                fclose( fh );
-        }
-
-        /* Check if the filename already is valid ANSI. */
-        if( utf16_to_ansi( filename_utf16, ansi_filename, size ) )
-            return 1;
-
-        /* Check for a legacy 8.3 short filename. */
-        int short_length = GetShortPathNameW( filename_utf16, filename_utf16, MAX_PATH );
-        if( short_length > 0 && short_length < MAX_PATH )
-            if( utf16_to_ansi( filename_utf16, ansi_filename, size ) )
-                return 1;
-    }
-    return 0;
 }
 
 /* Retrieve command line arguments as UTF-8. */
@@ -166,38 +140,14 @@ static cli_output_t cli_output;
 /* video filter operation struct */
 static cli_vid_filter_t filter;
 
-static const char * const demuxer_names[] =
-{
-    "auto",
-    "raw",
-    "y4m",
-#if HAVE_AVS
-    "avs",
-#endif
-#if HAVE_LAVF
-    "lavf",
-#endif
-#if HAVE_FFMS
-    "ffms",
-#endif
-    0
-};
+const char * const x264_avcintra_class_names[] = { "50", "100", "200", 0 };
+const char * const x264_cqm_names[] = { "flat", "jvt", 0 };
+const char * const x264_log_level_names[] = { "none", "error", "warning", "info", "debug", 0 };
+const char * const x264_partition_names[] = { "p8x8", "p4x4", "b8x8", "i8x8", "i4x4", "none", "all", 0 };
+const char * const x264_pulldown_names[] = { "none", "22", "32", "64", "double", "triple", "euro", 0 };
+const char * const x264_range_names[] = { "auto", "tv", "pc", 0 };
 
-static const char * const muxer_names[] =
-{
-    "auto",
-    "raw",
-    "mkv",
-    "flv",
-#if HAVE_GPAC || HAVE_LSMASH
-    "mp4",
-#endif
-    0
-};
-
-static const char * const pulldown_names[] = { "none", "22", "32", "64", "double", "triple", "euro", 0 };
-static const char * const log_level_names[] = { "none", "error", "warning", "info", "debug", 0 };
-static const char * const output_csp_names[] =
+const char * const x264_output_csp_names[] =
 {
 #if !X264_CHROMA_FORMAT || X264_CHROMA_FORMAT == X264_CSP_I400
     "i400",
@@ -213,6 +163,50 @@ static const char * const output_csp_names[] =
 #endif
     0
 };
+
+const char * const x264_valid_profile_names[] =
+{
+#if !X264_CHROMA_FORMAT || X264_CHROMA_FORMAT <= X264_CSP_I420
+#if HAVE_BITDEPTH8
+#if !X264_CHROMA_FORMAT || X264_CHROMA_FORMAT == X264_CSP_I420
+    "baseline", "main",
+#endif
+    "high",
+#endif
+#if HAVE_BITDEPTH10
+   "high10",
+#endif
+#endif
+#if !X264_CHROMA_FORMAT || X264_CHROMA_FORMAT == X264_CSP_I422
+   "high422",
+#endif
+   "high444", 0
+};
+
+const char * const x264_demuxer_names[] =
+{
+    "auto", "raw", "y4m",
+#if HAVE_AVS
+    "avs",
+#endif
+#if HAVE_LAVF
+    "lavf",
+#endif
+#if HAVE_FFMS
+    "ffms",
+#endif
+    0
+};
+
+const char * const x264_muxer_names[] =
+{
+    "auto", "raw", "mkv", "flv",
+#if HAVE_GPAC || HAVE_LSMASH
+    "mp4",
+#endif
+    0
+};
+
 static const char * const chroma_format_names[] =
 {
     [0] = "all",
@@ -221,8 +215,6 @@ static const char * const chroma_format_names[] =
     [X264_CSP_I422] = "i422",
     [X264_CSP_I444] = "i444"
 };
-
-static const char * const range_names[] = { "auto", "tv", "pc", 0 };
 
 typedef struct
 {
@@ -270,7 +262,7 @@ static int  parse( int argc, char **argv, x264_param_t *param, cli_opt_t *opt );
 static int  encode( x264_param_t *param, cli_opt_t *opt );
 
 /* logging and printing for within the cli system */
-static int cli_log_level;
+static int cli_log_level = X264_LOG_INFO;
 void x264_cli_log( const char *name, int i_level, const char *fmt, ... )
 {
     if( i_level > cli_log_level )
@@ -327,9 +319,17 @@ static void print_version_info( void )
 #if HAVE_FFMS
     printf( "(ffmpegsource %d.%d.%d.%d)\n", FFMS_VERSION >> 24, (FFMS_VERSION & 0xff0000) >> 16, (FFMS_VERSION & 0xff00) >> 8, FFMS_VERSION & 0xff );
 #endif
+#if HAVE_GPAC
+    printf( "(gpac " GPAC_VERSION ")\n" );
+#endif
+#if HAVE_LSMASH
+    printf( "(lsmash %d.%d.%d)\n", LSMASH_VERSION_MAJOR, LSMASH_VERSION_MINOR, LSMASH_VERSION_MICRO );
+#endif
     printf( "built on " __DATE__ ", " );
 #ifdef __INTEL_COMPILER
     printf( "intel: %.2f (%d)\n", __INTEL_COMPILER / 100.f, __INTEL_COMPILER_BUILD_DATE );
+#elif defined(__clang__)
+    printf( "clang: " __clang_version__ "\n" );
 #elif defined(__GNUC__)
     printf( "gcc: " __VERSION__ "\n" );
 #elif defined(_MSC_FULL_VER)
@@ -355,8 +355,11 @@ static void print_version_info( void )
 #endif
 }
 
-static int main_internal( int argc, char **argv )
+REALIGN_STACK int main( int argc, char **argv )
 {
+    if( argc == 4 && !strcmp( argv[1], "--autocomplete" ) )
+        return x264_cli_autocomplete( argv[2], argv[3] );
+
     x264_param_t param;
     cli_opt_t opt = {0};
     int ret = 0;
@@ -372,6 +375,7 @@ static int main_internal( int argc, char **argv )
     _setmode( _fileno( stderr ), _O_BINARY );
 #endif
 
+    x264_param_default( &param );
     /* Parse command line */
     if( parse( argc, argv, &param, &opt ) < 0 )
         ret = -1;
@@ -398,6 +402,7 @@ static int main_internal( int argc, char **argv )
         fclose( opt.tcfile_out );
     if( opt.qpfile )
         fclose( opt.qpfile );
+    x264_param_cleanup( &param );
 
 #ifdef _WIN32
     SetConsoleTitleW( org_console_title );
@@ -405,11 +410,6 @@ static int main_internal( int argc, char **argv )
 #endif
 
     return ret;
-}
-
-int main( int argc, char **argv )
-{
-    return x264_stack_align( main_internal, argc, argv );
 }
 
 static char const *strtable_lookup( const char * const table[], int idx )
@@ -588,23 +588,7 @@ static void help( x264_param_t *defaults, int longhelp )
         "                                  - high444:\n"
         "                                    Support for bit depth 8-10.\n"
         "                                    Support for 4:2:0/4:2:2/4:4:4 chroma subsampling.\n" );
-        else H0(
-        "                                  - "
-#if !X264_CHROMA_FORMAT || X264_CHROMA_FORMAT <= X264_CSP_I420
-#if HAVE_BITDEPTH8
-#if !X264_CHROMA_FORMAT || X264_CHROMA_FORMAT == X264_CSP_I420
-        "baseline,main,"
-#endif
-        "high,"
-#endif
-#if HAVE_BITDEPTH10
-        "high10,"
-#endif
-#endif
-#if !X264_CHROMA_FORMAT || X264_CHROMA_FORMAT == X264_CSP_I422
-        "high422,"
-#endif
-        "high444\n" );
+    else H0( "                                  - %s\n", stringify_names( buf, x264_valid_profile_names ) );
     H0( "      --preset <string>       Use a preset to select encoding settings [medium]\n"
         "                                  Overridden by user settings.\n" );
     H2( "                                  - ultrafast:\n"
@@ -791,9 +775,8 @@ static void help( x264_param_t *defaults, int longhelp )
     H1( "Analysis:\n" );
     H1( "\n" );
     H1( "  -A, --partitions <string>   Partitions to consider [\"p8x8,b8x8,i8x8,i4x4\"]\n"
-        "                                  - p8x8, p4x4, b8x8, i8x8, i4x4\n"
-        "                                  - none, all\n"
-        "                                  (p4x4 requires p8x8. i8x8 requires --8x8dct.)\n" );
+        "                                  - %s\n"
+        "                                  (p4x4 requires p8x8. i8x8 requires --8x8dct.)\n", stringify_names( buf, x264_partition_names ) );
     H1( "      --direct <string>       Direct MV prediction mode [\"%s\"]\n"
         "                                  - none, spatial, temporal, auto\n",
                                        strtable_lookup( x264_direct_pred_names, defaults->analyse.i_direct_mv_pred ) );
@@ -845,8 +828,8 @@ static void help( x264_param_t *defaults, int longhelp )
     H2( "      --deadzone-inter <int>  Set the size of the inter luma quantization deadzone [%d]\n", defaults->analyse.i_luma_deadzone[0] );
     H2( "      --deadzone-intra <int>  Set the size of the intra luma quantization deadzone [%d]\n", defaults->analyse.i_luma_deadzone[1] );
     H2( "                                  Deadzones should be in the range 0 - 32.\n" );
-    H2( "      --cqm <string>          Preset quant matrices [\"flat\"]\n"
-        "                                  - jvt, flat\n" );
+    H2( "      --cqm <string>          Preset quant matrices [\"%s\"]\n"
+        "                                  - %s\n", x264_cqm_names[0], stringify_names( buf, x264_cqm_names ) );
     H1( "      --cqmfile <string>      Read custom quant matrices from a JM-compatible file\n" );
     H2( "                                  Overrides any other --cqm* options.\n" );
     H2( "      --cqm4 <list>           Set all 4x4 quant matrices\n"
@@ -869,7 +852,7 @@ static void help( x264_param_t *defaults, int longhelp )
         "                                  - component, pal, ntsc, secam, mac, undef\n",
                                        strtable_lookup( x264_vidformat_names, defaults->vui.i_vidformat ) );
     H2( "      --range <string>        Specify color range [\"%s\"]\n"
-        "                                  - %s\n", range_names[0], stringify_names( buf, range_names ) );
+        "                                  - %s\n", x264_range_names[0], stringify_names( buf, x264_range_names ) );
     H2( "      --colorprim <string>    Specify color primaries [\"%s\"]\n"
         "                                  - undef, bt709, bt470m, bt470bg, smpte170m,\n"
         "                                    smpte240m, film, bt2020, smpte428,\n"
@@ -907,24 +890,24 @@ static void help( x264_param_t *defaults, int longhelp )
     H0( "\n" );
     H0( "  -o, --output <string>       Specify output file\n" );
     H1( "      --muxer <string>        Specify output container format [\"%s\"]\n"
-        "                                  - %s\n", muxer_names[0], stringify_names( buf, muxer_names ) );
+        "                                  - %s\n", x264_muxer_names[0], stringify_names( buf, x264_muxer_names ) );
     H1( "      --demuxer <string>      Specify input container format [\"%s\"]\n"
-        "                                  - %s\n", demuxer_names[0], stringify_names( buf, demuxer_names ) );
+        "                                  - %s\n", x264_demuxer_names[0], stringify_names( buf, x264_demuxer_names ) );
     H1( "      --input-fmt <string>    Specify input file format (requires lavf support)\n" );
     H1( "      --input-csp <string>    Specify input colorspace format for raw input\n" );
     print_csp_names( longhelp );
     H1( "      --output-csp <string>   Specify output colorspace [\"%s\"]\n"
         "                                  - %s\n",
 #if X264_CHROMA_FORMAT
-        output_csp_names[0],
+        x264_output_csp_names[0],
 #else
         "i420",
 #endif
-        stringify_names( buf, output_csp_names ) );
+        stringify_names( buf, x264_output_csp_names ) );
     H1( "      --input-depth <integer> Specify input bit depth for raw input\n" );
     H1( "      --output-depth <integer> Specify output bit depth\n" );
     H1( "      --input-range <string>  Specify input color range [\"%s\"]\n"
-        "                                  - %s\n", range_names[0], stringify_names( buf, range_names ) );
+        "                                  - %s\n", x264_range_names[0], stringify_names( buf, x264_range_names ) );
     H1( "      --input-res <intxint>   Specify input resolution (width x height)\n" );
     H1( "      --index <string>        Filename for input index file\n" );
     H0( "      --sar width:height      Specify Sample Aspect Ratio\n" );
@@ -934,7 +917,7 @@ static void help( x264_param_t *defaults, int longhelp )
     H0( "      --level <string>        Specify level (as defined by Annex A)\n" );
     H1( "      --bluray-compat         Enable compatibility hacks for Blu-ray support\n" );
     H1( "      --avcintra-class <integer> Use compatibility hacks for AVC-Intra class\n"
-        "                                  - 50, 100, 200\n" );
+        "                                  - %s\n", stringify_names( buf, x264_avcintra_class_names ) );
     H1( "      --avcintra-flavor <string> AVC-Intra flavor [\"%s\"]\n"
         "                                  - %s\n", x264_avcintra_flavor_names[0], stringify_names( buf, x264_avcintra_flavor_names ) );
     H1( "      --stitchable            Don't optimize headers based on video content\n"
@@ -944,8 +927,8 @@ static void help( x264_param_t *defaults, int longhelp )
     H1( "      --no-progress           Don't show the progress indicator while encoding\n" );
     H0( "      --quiet                 Quiet Mode\n" );
     H1( "      --log-level <string>    Specify the maximum level of logging [\"%s\"]\n"
-        "                                  - %s\n", strtable_lookup( log_level_names, cli_log_level - X264_LOG_NONE ),
-                                       stringify_names( buf, log_level_names ) );
+        "                                  - %s\n", strtable_lookup( x264_log_level_names, cli_log_level - X264_LOG_NONE ),
+                                       stringify_names( buf, x264_log_level_names ) );
     H1( "      --psnr                  Enable PSNR computation\n" );
     H1( "      --ssim                  Enable SSIM computation\n" );
     H1( "      --threads <integer>     Force a specific number of threads\n" );
@@ -1396,9 +1379,9 @@ static int parse_enum_value( const char *arg, const char * const *names, int *ds
 static int parse( int argc, char **argv, x264_param_t *param, cli_opt_t *opt )
 {
     char *input_filename = NULL;
-    const char *demuxer = demuxer_names[0];
+    const char *demuxer = x264_demuxer_names[0];
     char *output_filename = NULL;
-    const char *muxer = muxer_names[0];
+    const char *muxer = x264_muxer_names[0];
     char *tcfile_name = NULL;
     x264_param_t defaults;
     char *profile = NULL;
@@ -1412,16 +1395,6 @@ static int parse( int argc, char **argv, x264_param_t *param, cli_opt_t *opt )
     cli_output_opt_t output_opt;
     char *preset = NULL;
     char *tune = NULL;
-
-    x264_param_default( &defaults );
-    cli_log_level = defaults.i_log_level;
-
-    memset( &input_opt, 0, sizeof(cli_input_opt_t) );
-    memset( &output_opt, 0, sizeof(cli_output_opt_t) );
-    input_opt.bit_depth = 8;
-    input_opt.input_range = input_opt.output_range = param->vui.b_fullrange = RANGE_AUTO;
-    int output_csp = defaults.i_csp;
-    opt->b_progress = 1;
 
     /* Presets are applied before all other options. */
     for( optind = 0;; )
@@ -1440,8 +1413,18 @@ static int parse( int argc, char **argv, x264_param_t *param, cli_opt_t *opt )
     if( preset && !strcasecmp( preset, "placebo" ) )
         b_turbo = 0;
 
-    if( x264_param_default_preset( param, preset, tune ) < 0 )
+    if( (preset || tune) && x264_param_default_preset( param, preset, tune ) < 0 )
         return -1;
+
+    x264_param_default( &defaults );
+    cli_log_level = defaults.i_log_level;
+
+    memset( &input_opt, 0, sizeof(cli_input_opt_t) );
+    memset( &output_opt, 0, sizeof(cli_output_opt_t) );
+    input_opt.bit_depth = 8;
+    input_opt.input_range = input_opt.output_range = param->vui.b_fullrange = RANGE_AUTO;
+    int output_csp = defaults.i_csp;
+    opt->b_progress = 1;
 
     /* Parse command line options */
     for( optind = 0;; )
@@ -1480,10 +1463,10 @@ static int parse( int argc, char **argv, x264_param_t *param, cli_opt_t *opt )
                 output_filename = optarg;
                 break;
             case OPT_MUXER:
-                FAIL_IF_ERROR( parse_enum_name( optarg, muxer_names, &muxer ), "Unknown muxer `%s'\n", optarg );
+                FAIL_IF_ERROR( parse_enum_name( optarg, x264_muxer_names, &muxer ), "Unknown muxer `%s'\n", optarg );
                 break;
             case OPT_DEMUXER:
-                FAIL_IF_ERROR( parse_enum_name( optarg, demuxer_names, &demuxer ), "Unknown demuxer `%s'\n", optarg );
+                FAIL_IF_ERROR( parse_enum_name( optarg, x264_demuxer_names, &demuxer ), "Unknown demuxer `%s'\n", optarg );
                 break;
             case OPT_INDEX:
                 input_opt.index_file = optarg;
@@ -1508,7 +1491,7 @@ static int parse( int argc, char **argv, x264_param_t *param, cli_opt_t *opt )
                 cli_log_level = param->i_log_level = X264_LOG_DEBUG;
                 break;
             case OPT_LOG_LEVEL:
-                if( !parse_enum_value( optarg, log_level_names, &cli_log_level ) )
+                if( !parse_enum_value( optarg, x264_log_level_names, &cli_log_level ) )
                     cli_log_level += X264_LOG_NONE;
                 else
                     cli_log_level = atoi( optarg );
@@ -1547,7 +1530,7 @@ static int parse( int argc, char **argv, x264_param_t *param, cli_opt_t *opt )
                 input_opt.timebase = optarg;
                 break;
             case OPT_PULLDOWN:
-                FAIL_IF_ERROR( parse_enum_value( optarg, pulldown_names, &opt->i_pulldown ), "Unknown pulldown `%s'\n", optarg );
+                FAIL_IF_ERROR( parse_enum_value( optarg, x264_pulldown_names, &opt->i_pulldown ), "Unknown pulldown `%s'\n", optarg );
                 break;
             case OPT_VIDEO_FILTER:
                 vid_filters = optarg;
@@ -1571,7 +1554,7 @@ static int parse( int argc, char **argv, x264_param_t *param, cli_opt_t *opt )
                 output_opt.use_dts_compress = 1;
                 break;
             case OPT_OUTPUT_CSP:
-                FAIL_IF_ERROR( parse_enum_value( optarg, output_csp_names, &output_csp ), "Unknown output csp `%s'\n", optarg );
+                FAIL_IF_ERROR( parse_enum_value( optarg, x264_output_csp_names, &output_csp ), "Unknown output csp `%s'\n", optarg );
                 // correct the parsed value to the libx264 csp value
 #if X264_CHROMA_FORMAT
                 static const uint8_t output_csp_fix[] = { X264_CHROMA_FORMAT, X264_CSP_RGB };
@@ -1581,11 +1564,11 @@ static int parse( int argc, char **argv, x264_param_t *param, cli_opt_t *opt )
                 param->i_csp = output_csp = output_csp_fix[output_csp];
                 break;
             case OPT_INPUT_RANGE:
-                FAIL_IF_ERROR( parse_enum_value( optarg, range_names, &input_opt.input_range ), "Unknown input range `%s'\n", optarg );
+                FAIL_IF_ERROR( parse_enum_value( optarg, x264_range_names, &input_opt.input_range ), "Unknown input range `%s'\n", optarg );
                 input_opt.input_range += RANGE_AUTO;
                 break;
             case OPT_RANGE:
-                FAIL_IF_ERROR( parse_enum_value( optarg, range_names, &param->vui.b_fullrange ), "Unknown range `%s'\n", optarg );
+                FAIL_IF_ERROR( parse_enum_value( optarg, x264_range_names, &param->vui.b_fullrange ), "Unknown range `%s'\n", optarg );
                 input_opt.output_range = param->vui.b_fullrange += RANGE_AUTO;
                 break;
             default:
@@ -1667,6 +1650,10 @@ generic_option:
     x264_cli_log( demuxername, X264_LOG_INFO, "%dx%d%c %u:%u @ %u/%u fps (%cfr)\n", info.width,
                   info.height, info.interlaced ? 'i' : 'p', info.sar_width, info.sar_height,
                   info.fps_num, info.fps_den, info.vfr ? 'v' : 'c' );
+
+    FAIL_IF_ERROR( info.width <= 0 || info.height <= 0 ||
+                   info.width > MAX_RESOLUTION || info.height > MAX_RESOLUTION,
+                   "invalid width x height (%dx%d)\n", info.width, info.height );
 
     if( tcfile_name )
     {
